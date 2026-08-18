@@ -279,7 +279,11 @@ enum GfxSlot {
     GFX_BOSS_BODY,
     GFX_BOSS_TURRET,
     GFX_EXPLOSION,
-    GFX_PICKUP,
+    GFX_PICKUP_HMG,       /* one crate icon per pickup type (same order */
+    GFX_PICKUP_SPREAD,    /* as the PickupType enum)                    */
+    GFX_PICKUP_ROCKET,
+    GFX_PICKUP_GRENADE,
+    GFX_PICKUP_LIFE,
     GFX_ROCKET,           /* rocket projectile sprite */
     GFX_COUNT
 };
@@ -289,7 +293,9 @@ enum PalIdx {
     C_TRANS = 0,
     C_SKIN = 1, C_UNIFORM, C_UNIFORM_DK, C_METAL, C_METAL_DK,
     C_FLAME, C_FLAME2, C_ENEMY, C_ENEMY_DK, C_TRACER, C_SHADOW,
-    C_PICKUP, C_WHITE
+    C_PICKUP, C_WHITE,
+    C_SKIN_DK, C_UNIFORM_LT, C_GUN, C_RED, C_BLUE, C_BROWN,
+    C_METAL_LT, C_WOOD
 };
 
 /* ------------------------------------------------------------------ */
@@ -586,101 +592,386 @@ static void copyToVram(u16 *dst, const u8 *src, int bytes)
     for (int i = 0; i < bytes / 2; i++) dst[i] = s[i];
 }
 
+/* Map an ASCII-art character to a palette index.
+   Legend: . transparent  S/s skin  U/u/L olive uniform  E/e enemy uniform
+           M/m/N steel    G gun-black  F/f muzzle-flame  T tracer  h shadow
+           P gold  W white  R red  B blue  O boot-brown  w crate-wood      */
+static u8 artCol(char c)
+{
+    switch (c) {
+        case 'S': return C_SKIN;      case 's': return C_SKIN_DK;
+        case 'U': return C_UNIFORM;   case 'u': return C_UNIFORM_DK;
+        case 'L': return C_UNIFORM_LT;
+        case 'M': return C_METAL;     case 'm': return C_METAL_DK;
+        case 'N': return C_METAL_LT;
+        case 'G': return C_GUN;
+        case 'F': return C_FLAME;     case 'f': return C_FLAME2;
+        case 'E': return C_ENEMY;     case 'e': return C_ENEMY_DK;
+        case 'T': return C_TRACER;
+        case 'h': return C_SHADOW;
+        case 'P': return C_PICKUP;
+        case 'W': return C_WHITE;
+        case 'R': return C_RED;       case 'B': return C_BLUE;
+        case 'O': return C_BROWN;     case 'w': return C_WOOD;
+        default:  return C_TRANS;
+    }
+}
+
+/* Decode 16 rows of ASCII art into a 16x16 sprite slot.
+   Short rows are padded with transparency, so a stray missing column
+   can never read past the end of a string. */
+static void sprite16(int slot, const char *rows[16])
+{
+    static u8 buf[256];
+    for (int y = 0; y < 16; y++) {
+        const char *r = rows[y];
+        int done = 0;
+        for (int x = 0; x < 16; x++) {
+            char c = '.';
+            if (!done) {
+                if (r[x] == '\0') done = 1;
+                else c = r[x];
+            }
+            px16(buf, x, y, artCol(c));
+        }
+    }
+    copyToVram(gfx[slot], buf, 256);
+}
+
 static void buildArt(void)
 {
+    /* --- player standing (faces right; hardware hflips for left) --- */
+    static const char *artPlayer[16] = {
+        "................",
+        ".....hhhhhh.....",
+        "....hLLLLLLh....",
+        "....hLuuuuLh....",
+        ".....SSSSs......",
+        ".....SSSSs......",
+        "......sss.......",
+        "....LUUUUUL.....",
+        "...SLUUUUULs....",
+        "...suUUUUUuGGGG.",
+        "....uUUUUUuGGGG.",
+        ".....uu.uu..G...",
+        ".....uu.uu......",
+        ".....uu.uu......",
+        "....OOO.OOO.....",
+        "....OOO.OOO.....",
+    };
+    sprite16(GFX_PLAYER, artPlayer);
+
+    /* --- player crouching --- */
+    static const char *artCrouch[16] = {
+        "................",
+        "................",
+        "................",
+        "................",
+        "....hhhhhh......",
+        "...hLLLLLLh.....",
+        "....SSSSs.......",
+        "....SSSSs.......",
+        "...LUUUUUL......",
+        "..sLUUUUULGGGGG.",
+        "..suUUUUUuGGGGG.",
+        "...uUUUUUu......",
+        "..uuUUUUUuu.....",
+        "..uu.....uu.....",
+        ".OOO.....OOO....",
+        ".OOO.....OOO....",
+    };
+    sprite16(GFX_PLAYER_CROUCH, artCrouch);
+
+    /* --- player bullet: tracer round with hot core --- */
+    static const char *artBullet[16] = {
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "......fTTTT.....",
+        "....ffTTWWTT....",
+        "......fTTTT.....",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+    };
+    sprite16(GFX_BULLET, artBullet);
+
+    /* --- enemy bullet: glowing fireball --- */
+    static const char *artEBullet[16] = {
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "......ff........",
+        ".....fFFf.......",
+        "....fFWWFf......",
+        "....fFWWFf......",
+        ".....fFFf.......",
+        "......ff........",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+    };
+    sprite16(GFX_EBULLET, artEBullet);
+
+    /* --- grenade: pineapple body + pin --- */
+    static const char *artGrenade[16] = {
+        "................",
+        "................",
+        "................",
+        "......NM........",
+        "......mM........",
+        ".....uuuu.......",
+        "....uULULu......",
+        "....uLULUu......",
+        "....uULULu......",
+        "....uLULUu......",
+        ".....uuuu.......",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+    };
+    sprite16(GFX_GRENADE, artGrenade);
+
+    /* --- enemy soldier (faces left; hardware hflips for right) --- */
+    static const char *artSoldier[16] = {
+        "................",
+        ".....hhhhhh.....",
+        "....hEEEEEEh....",
+        "....hEeeeEEh....",
+        "......sSSSS.....",
+        "......sSSSS.....",
+        ".......sss......",
+        ".....eEEEEE.....",
+        "....seEEEEEs....",
+        "GGGGeEEEEEEs....",
+        "GGGGeEEEEEe.....",
+        "...G.ee.ee......",
+        ".....ee.ee......",
+        ".....ee.ee......",
+        "....OOO.OOO.....",
+        "....OOO.OOO.....",
+    };
+    sprite16(GFX_SOLDIER, artSoldier);
+
+    /* --- turret: armoured dome on sandbagged base, barrel left --- */
+    static const char *artTurret[16] = {
+        "................",
+        "................",
+        "................",
+        "................",
+        ".......mm.......",
+        "......mNNm......",
+        ".....mNMMNm.....",
+        "GGGGmMMMMMMm....",
+        "GGGGmMMMMMMm....",
+        ".....mMMMMm.....",
+        "....mmmmmmmm....",
+        "...OwwOOwwOOw...",
+        "..OwwOOwwOOwwO..",
+        "..hhhhhhhhhhhh..",
+        "................",
+        "................",
+    };
+    sprite16(GFX_TURRET, artTurret);
+
+    /* --- explosion: fireball with white-hot core and sparks --- */
+    static const char *artExplosion[16] = {
+        ".......f........",
+        "...f..fFf...f...",
+        ".....fFFFf......",
+        "...fFFWWFFf.....",
+        "..fFFWWWWFFf....",
+        "..fFWWWWWWFf.f..",
+        ".ffFWWWWWWFff...",
+        "..fFFWWWWFFf....",
+        "...fFFWWFFf.....",
+        "....fFFFFf......",
+        "..f...fFf.......",
+        ".......f........",
+        "................",
+        "................",
+        "................",
+        "................",
+    };
+    sprite16(GFX_EXPLOSION, artExplosion);
+
+    /* --- weapon crates: gold-banded wood, unique icon per pickup --- */
+    static const char *artCrateHmg[16] = {
+        "................",
+        "................",
+        "................",
+        ".PPPPPPPPPPPPP..",
+        ".PwwwwwwwwwwwP..",
+        ".Pww.......wwP..",
+        ".Pw..G......wP..",
+        ".Pw.GGGGGGG.wP..",
+        ".Pw.GGGGGGGGwP..",
+        ".Pw...GG....wP..",
+        ".Pw...GG....wP..",
+        ".Pww.......wwP..",
+        ".PwwwwwwwwwwwP..",
+        ".PPPPPPPPPPPPP..",
+        "................",
+        "................",
+    };
+    sprite16(GFX_PICKUP_HMG, artCrateHmg);
+
+    static const char *artCrateSpread[16] = {
+        "................",
+        "................",
+        "................",
+        ".PPPPPPPPPPPPP..",
+        ".PwwwwwwwwwwwP..",
+        ".Pww.......wwP..",
+        ".Pw......TT.wP..",
+        ".Pw.TT.TT...wP..",
+        ".Pw.TTTT.TT.wP..",
+        ".Pw.TT.TT...wP..",
+        ".Pw......TT.wP..",
+        ".Pww.......wwP..",
+        ".PwwwwwwwwwwwP..",
+        ".PPPPPPPPPPPPP..",
+        "................",
+        "................",
+    };
+    sprite16(GFX_PICKUP_SPREAD, artCrateSpread);
+
+    static const char *artCrateRocket[16] = {
+        "................",
+        "................",
+        "................",
+        ".PPPPPPPPPPPPP..",
+        ".PwwwwwwwwwwwP..",
+        ".Pww.......wwP..",
+        ".Pw.........wP..",
+        ".Pw.m.......wP..",
+        ".PwfMMMMMMRRwP..",
+        ".Pw.m.......wP..",
+        ".Pw.........wP..",
+        ".Pww.......wwP..",
+        ".PwwwwwwwwwwwP..",
+        ".PPPPPPPPPPPPP..",
+        "................",
+        "................",
+    };
+    sprite16(GFX_PICKUP_ROCKET, artCrateRocket);
+
+    static const char *artCrateGrenade[16] = {
+        "................",
+        "................",
+        "................",
+        ".PPPPPPPPPPPPP..",
+        ".PwwwwwwwwwwwP..",
+        ".Pww.......wwP..",
+        ".Pw....NM...wP..",
+        ".Pw...uuuu..wP..",
+        ".Pw..uULULu.wP..",
+        ".Pw..uLULUu.wP..",
+        ".Pw...uuuu..wP..",
+        ".Pww.......wwP..",
+        ".PwwwwwwwwwwwP..",
+        ".PPPPPPPPPPPPP..",
+        "................",
+        "................",
+    };
+    sprite16(GFX_PICKUP_GRENADE, artCrateGrenade);
+
+    static const char *artCrateLife[16] = {
+        "................",
+        "................",
+        "................",
+        ".PPPPPPPPPPPPP..",
+        ".PWWWWWWWWWWWP..",
+        ".PWW.......WWP..",
+        ".PW....RR...WP..",
+        ".PW....RR...WP..",
+        ".PW..RRRRRR.WP..",
+        ".PW....RR...WP..",
+        ".PW....RR...WP..",
+        ".PWW.......WWP..",
+        ".PWWWWWWWWWWWP..",
+        ".PPPPPPPPPPPPP..",
+        "................",
+        "................",
+    };
+    sprite16(GFX_PICKUP_LIFE, artCrateLife);
+
+    /* --- rocket projectile: steel body, red nose, exhaust flame --- */
+    static const char *artRocket[16] = {
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "...m............",
+        "ff.MMMNNMMMRR...",
+        "fffMMMNNMMMRRR..",
+        "ff.MMMNNMMMRR...",
+        "...m............",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+    };
+    sprite16(GFX_ROCKET, artRocket);
+
+    /* --- boss turret (16x16): armoured cupola, cannon left --- */
+    static const char *artBossTurret[16] = {
+        "................",
+        "................",
+        "................",
+        "......mmmm......",
+        ".....mNNNNm.....",
+        "....mNMMMMNm....",
+        "GGGGmMMMMMMm....",
+        "GGGGmMMRRMMm....",
+        "....mMMRRMMm....",
+        "....mMMMMMMm....",
+        ".....mmmmmm.....",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+    };
+    sprite16(GFX_BOSS_TURRET, artBossTurret);
+
+    /* --- boss body (32x32 tank): layered hull, cannon, tracks --- */
     static u8 buf[32 * 32];
-
-    /* --- player standing (16x16) --- */
-    memset(buf, 0, 256);
-    rect16(buf, 6, 1, 4, 3, C_SKIN);            /* head   */
-    rect16(buf, 5, 0, 6, 2, C_UNIFORM_DK);      /* helmet */
-    rect16(buf, 5, 4, 6, 6, C_UNIFORM);         /* torso  */
-    rect16(buf, 9, 5, 6, 2, C_METAL);           /* rifle  */
-    rect16(buf, 5, 10, 2, 5, C_UNIFORM_DK);     /* legs   */
-    rect16(buf, 9, 10, 2, 5, C_UNIFORM_DK);
-    rect16(buf, 4, 15, 4, 1, C_SHADOW);         /* boots  */
-    rect16(buf, 8, 15, 4, 1, C_SHADOW);
-    copyToVram(gfx[GFX_PLAYER], buf, 256);
-
-    /* --- player crouch --- */
-    memset(buf, 0, 256);
-    rect16(buf, 6, 6, 4, 3, C_SKIN);
-    rect16(buf, 5, 5, 6, 2, C_UNIFORM_DK);
-    rect16(buf, 4, 9, 8, 4, C_UNIFORM);
-    rect16(buf, 10, 10, 6, 2, C_METAL);
-    rect16(buf, 4, 13, 8, 3, C_UNIFORM_DK);
-    copyToVram(gfx[GFX_PLAYER_CROUCH], buf, 256);
-
-    /* --- player bullet --- */
-    memset(buf, 0, 256);
-    rect16(buf, 5, 7, 6, 2, C_TRACER);
-    rect16(buf, 7, 6, 2, 4, C_FLAME);
-    copyToVram(gfx[GFX_BULLET], buf, 256);
-
-    /* --- enemy bullet --- */
-    memset(buf, 0, 256);
-    rect16(buf, 6, 6, 4, 4, C_FLAME);
-    rect16(buf, 7, 7, 2, 2, C_FLAME2);
-    copyToVram(gfx[GFX_EBULLET], buf, 256);
-
-    /* --- grenade --- */
-    memset(buf, 0, 256);
-    rect16(buf, 6, 6, 4, 5, C_UNIFORM_DK);
-    rect16(buf, 7, 4, 2, 2, C_METAL);
-    copyToVram(gfx[GFX_GRENADE], buf, 256);
-
-    /* --- enemy soldier --- */
-    memset(buf, 0, 256);
-    rect16(buf, 6, 1, 4, 3, C_SKIN);
-    rect16(buf, 5, 0, 6, 2, C_ENEMY_DK);
-    rect16(buf, 5, 4, 6, 6, C_ENEMY);
-    rect16(buf, 1, 5, 6, 2, C_METAL);
-    rect16(buf, 5, 10, 2, 5, C_ENEMY_DK);
-    rect16(buf, 9, 10, 2, 5, C_ENEMY_DK);
-    copyToVram(gfx[GFX_SOLDIER], buf, 256);
-
-    /* --- turret --- */
-    memset(buf, 0, 256);
-    rect16(buf, 2, 9, 12, 6, C_METAL_DK);
-    rect16(buf, 5, 5, 6, 5, C_METAL);
-    rect16(buf, 0, 6, 6, 2, C_METAL_DK);
-    copyToVram(gfx[GFX_TURRET], buf, 256);
-
-    /* --- explosion --- */
-    memset(buf, 0, 256);
-    rect16(buf, 3, 3, 10, 10, C_FLAME);
-    rect16(buf, 5, 5, 6, 6, C_FLAME2);
-    rect16(buf, 7, 7, 2, 2, C_WHITE);
-    copyToVram(gfx[GFX_EXPLOSION], buf, 256);
-
-    /* --- pickup (grenade crate) --- */
-    memset(buf, 0, 256);
-    rect16(buf, 3, 5, 10, 8, C_PICKUP);
-    rect16(buf, 4, 6, 8, 6, C_UNIFORM_DK);
-    rect16(buf, 7, 5, 2, 8, C_PICKUP);
-    copyToVram(gfx[GFX_PICKUP], buf, 256);
-
-    /* --- rocket projectile --- */
-    memset(buf, 0, 256);
-    rect16(buf, 3, 7, 8, 3, C_FLAME);        /* body */
-    rect16(buf, 10, 7, 3, 3, C_FLAME2);      /* nose */
-    rect16(buf, 1, 7, 2, 1, C_METAL_DK);     /* tail fin top */
-    rect16(buf, 1, 9, 2, 1, C_METAL_DK);     /* tail fin bot */
-    copyToVram(gfx[GFX_ROCKET], buf, 256);
-
-    /* --- boss turret (16x16) --- */
-    memset(buf, 0, 256);
-    rect16(buf, 4, 6, 8, 8, C_METAL);
-    rect16(buf, 0, 8, 8, 3, C_METAL_DK);
-    copyToVram(gfx[GFX_BOSS_TURRET], buf, 256);
-
-    /* --- boss body (32x32 tank) --- */
     memset(buf, 0, 1024);
-    rect32(buf, 2, 14, 28, 10, C_METAL);        /* hull   */
-    rect32(buf, 8, 8, 14, 8, C_METAL_DK);       /* cabin  */
-    rect32(buf, 0, 22, 32, 8, C_SHADOW);        /* tracks */
-    for (int i = 2; i < 30; i += 5)
-        rect32(buf, i, 24, 3, 4, C_METAL_DK);   /* wheels */
+    rect32(buf,  1, 13, 30, 11, C_SHADOW);     /* hull outline           */
+    rect32(buf,  2, 14, 28,  9, C_METAL);      /* hull                   */
+    rect32(buf,  2, 14, 28,  2, C_METAL_LT);   /* hull top highlight     */
+    rect32(buf,  7,  6, 16,  9, C_SHADOW);     /* cabin outline          */
+    rect32(buf,  8,  7, 14,  7, C_METAL_DK);   /* cabin                  */
+    rect32(buf,  8,  7, 14,  2, C_METAL);      /* cabin highlight        */
+    rect32(buf, 12,  8,  5,  3, C_METAL_LT);   /* hatch                  */
+    rect32(buf, 18,  9,  3,  3, C_RED);        /* insignia               */
+    rect32(buf,  0,  9,  9,  3, C_GUN);        /* cannon barrel          */
+    rect32(buf,  0,  9,  9,  1, C_METAL_LT);   /* barrel glint           */
+    for (int i = 4; i < 28; i += 4)
+        rect32(buf, i, 17, 2, 4, C_METAL_DK);  /* hull armour vents      */
+    rect32(buf,  0, 23, 32,  8, C_SHADOW);     /* track housing          */
+    rect32(buf,  1, 24, 30,  6, C_GUN);        /* track belt             */
+    for (int i = 2; i < 30; i += 4) {
+        rect32(buf, i, 25, 2, 4, C_METAL_DK);  /* road wheels            */
+        px32(buf, i, 26, C_METAL_LT);          /* wheel glint            */
+    }
     copyToVram(bossGfx, buf, 1024);
 }
 
@@ -690,6 +981,18 @@ static void buildArt(void)
 
 static int bgId;
 
+/* Background palette slots (independent of the sprite palette) */
+enum BgPal {
+    B_GROUND1 = 1, B_GROUND2, B_SURF, B_SURF_DK,
+    B_MTN, B_MTN_DK, B_CLOUD, B_ROCK, B_DECO, B_SKY_LOW
+};
+
+/* Background tile indices */
+enum BgTile {
+    T_SKY = 0, T_FILL, T_SURF, T_MTN, T_RIDGE_UP, T_RIDGE_DN,
+    T_CLOUD, T_ROCK, T_DECO, T_SKY_LOW, T_COUNT
+};
+
 static void buildBackground(void)
 {
     bgId = bgInit(0, BgType_Text8bpp, BgSize_T_512x256, 4, 0);
@@ -697,56 +1000,152 @@ static void buildBackground(void)
     u8 tile[64];
     u16 *tiles = bgGetGfxPtr(bgId);
 
-    /* tile 0: empty */
+    /* T_SKY: empty (colour 0 = sky) */
     memset(tile, 0, 64);
-    copyToVram(tiles, tile, 64);
-    /* tile 1: dirt/ground fill */
-    for (int i = 0; i < 64; i++) tile[i] = ((i * 7 + i / 8) % 11 == 0) ? C_UNIFORM_DK : C_SHADOW;
-    copyToVram(tiles + 32, tile, 64);
-    /* tile 2: ground surface */
-    for (int i = 0; i < 64; i++) tile[i] = (i < 16) ? C_ENEMY : C_SHADOW;
-    copyToVram(tiles + 64, tile, 64);
-    /* tile 3: distant feature (ridge / dune / girder) */
-    for (int i = 0; i < 64; i++) tile[i] = (i / 8 > (i % 8) / 2 + 2) ? C_METAL_DK : 0;
-    copyToVram(tiles + 96, tile, 64);
+    copyToVram(tiles + T_SKY * 32, tile, 64);
+
+    /* T_FILL: earth fill with pebble dither */
+    for (int i = 0; i < 64; i++)
+        tile[i] = ((i * 7 + i / 8) % 11 == 0) ? B_GROUND2 : B_GROUND1;
+    copyToVram(tiles + T_FILL * 32, tile, 64);
+
+    /* T_SURF: grass/sand lip, dark packed edge, then earth */
+    for (int y = 0; y < 8; y++)
+        for (int x = 0; x < 8; x++) {
+            u8 c;
+            if (y == 0)      c = ((x * 3) % 5 == 0) ? B_SURF_DK : B_SURF;
+            else if (y == 1) c = B_SURF;
+            else if (y == 2) c = B_SURF_DK;
+            else             c = ((x * 7 + y) % 9 == 0) ? B_GROUND2 : B_GROUND1;
+            tile[y * 8 + x] = c;
+        }
+    copyToVram(tiles + T_SURF * 32, tile, 64);
+
+    /* T_MTN: solid mountain/building body with subtle texture */
+    for (int i = 0; i < 64; i++)
+        tile[i] = ((i * 5 + i / 8) % 13 == 0) ? B_MTN_DK : B_MTN;
+    copyToVram(tiles + T_MTN * 32, tile, 64);
+
+    /* T_RIDGE_UP: slope rising to the right (/) */
+    for (int y = 0; y < 8; y++)
+        for (int x = 0; x < 8; x++)
+            tile[y * 8 + x] = (y >= 7 - x) ? ((y == 7 - x) ? B_MTN_DK : B_MTN) : 0;
+    copyToVram(tiles + T_RIDGE_UP * 32, tile, 64);
+
+    /* T_RIDGE_DN: slope falling to the right (\) */
+    for (int y = 0; y < 8; y++)
+        for (int x = 0; x < 8; x++)
+            tile[y * 8 + x] = (y >= x) ? ((y == x) ? B_MTN_DK : B_MTN) : 0;
+    copyToVram(tiles + T_RIDGE_DN * 32, tile, 64);
+
+    /* T_CLOUD: soft cloud puff */
+    memset(tile, 0, 64);
+    for (int y = 2; y < 6; y++)
+        for (int x = 0; x < 8; x++) {
+            int edge = (y == 2 || y == 5);
+            if (!edge || (x > 1 && x < 6)) tile[y * 8 + x] = B_CLOUD;
+        }
+    copyToVram(tiles + T_CLOUD * 32, tile, 64);
+
+    /* T_ROCK: buried boulder in the earth fill */
+    for (int i = 0; i < 64; i++)
+        tile[i] = ((i * 7 + i / 8) % 11 == 0) ? B_GROUND2 : B_GROUND1;
+    for (int y = 2; y < 6; y++)
+        for (int x = 2; x < 7; x++)
+            tile[y * 8 + x] = (y == 2 || x == 2) ? B_ROCK : B_GROUND2;
+    copyToVram(tiles + T_ROCK * 32, tile, 64);
+
+    /* T_DECO: foreground detail (grass tuft / cactus / girder) */
+    memset(tile, 0, 64);
+    for (int y = 2; y < 8; y++) tile[y * 8 + 3] = B_DECO;
+    for (int y = 4; y < 8; y++) { tile[y * 8 + 1] = B_DECO; tile[y * 8 + 5] = B_DECO; }
+    tile[3 * 8 + 2] = B_DECO; tile[5 * 8 + 2] = B_DECO;
+    copyToVram(tiles + T_DECO * 32, tile, 64);
+
+    /* T_SKY_LOW: horizon haze band */
+    for (int i = 0; i < 64; i++)
+        tile[i] = ((i + i / 8) % 3 == 0) ? B_SKY_LOW : 0;
+    copyToVram(tiles + T_SKY_LOW * 32, tile, 64);
+
+    /* Mountain silhouette height per column (in tiles), tileable */
+    static const int mtnH[16] = { 2,3,4,5,5,4,3,2, 2,3,4,4,3,2,1,1 };
 
     u16 *map = bgGetMapPtr(bgId);
+    int groundRow = GROUND_Y / 8;
+
     for (int y = 0; y < 32; y++) {
         for (int x = 0; x < 64; x++) {
-            u16 t = 0;
+            u16 t = T_SKY;
             int py = y * 8;
-            if (py >= GROUND_Y + 8) t = 1;
-            else if (py >= GROUND_Y) t = 2;
-            else if (py >= GROUND_Y - 16 && ((x * 13) % 7) < 2) t = 3;
+
+            if (py >= GROUND_Y + 8) {
+                t = ((x * 11 + y * 5) % 13 == 0) ? T_ROCK : T_FILL;
+            } else if (py >= GROUND_Y) {
+                t = T_SURF;
+            } else {
+                int h    = mtnH[x & 15];
+                int hNxt = mtnH[(x + 1) & 15];
+                int top  = groundRow - h;
+                if (y > top && y < groundRow) {
+                    t = T_MTN;
+                } else if (y == top) {
+                    t = (hNxt > h) ? T_RIDGE_UP : T_RIDGE_DN;
+                } else if (y >= 2 && y <= 5 && ((x * 13 + y * 7) % 19) == 0) {
+                    t = T_CLOUD;
+                } else if (y == groundRow - 6 && (x & 15) >= 14) {
+                    t = T_SKY_LOW;      /* haze where silhouette is lowest */
+                }
+                /* foreground details poking above the ground line */
+                if (y == groundRow - 1 && ((x * 29) % 9) == 0) t = T_DECO;
+            }
+
             /* 512-wide text bg uses two screenblocks side by side */
             int sb = (x >= 32) ? 1 : 0;
             map[sb * 1024 + y * 32 + (x % 32)] = t;
         }
     }
 
-    /* Per-stage palette: sky, ground, surface, distant feature */
+    /* Per-stage scenery palette */
     switch (currentStage) {
         default:
-        case 0: /* Rolling hills – blue sky, green grass */
-            BG_PALETTE[0]            = RGB15(8, 14, 24);   /* sky        */
-            BG_PALETTE[C_SHADOW]     = RGB15(6, 5, 3);
-            BG_PALETTE[C_UNIFORM_DK] = RGB15(10, 8, 4);
-            BG_PALETTE[C_ENEMY]      = RGB15(6, 14, 4);
-            BG_PALETTE[C_METAL_DK]   = RGB15(9, 9, 12);
+        case 0: /* Rolling hills - blue sky, grass, forested ridge */
+            BG_PALETTE[0]           = RGB15(11, 17, 28);  /* sky          */
+            BG_PALETTE[B_SKY_LOW]   = RGB15(16, 21, 29);  /* horizon haze */
+            BG_PALETTE[B_CLOUD]     = RGB15(29, 30, 31);
+            BG_PALETTE[B_MTN]       = RGB15(6, 11, 9);    /* far forest   */
+            BG_PALETTE[B_MTN_DK]    = RGB15(4, 8, 7);
+            BG_PALETTE[B_SURF]      = RGB15(8, 17, 5);    /* grass        */
+            BG_PALETTE[B_SURF_DK]   = RGB15(5, 11, 3);
+            BG_PALETTE[B_GROUND1]   = RGB15(9, 6, 3);     /* earth        */
+            BG_PALETTE[B_GROUND2]   = RGB15(12, 9, 5);
+            BG_PALETTE[B_ROCK]      = RGB15(13, 13, 14);
+            BG_PALETTE[B_DECO]      = RGB15(10, 20, 7);   /* bushes       */
             break;
-        case 1: /* Desert outpost – ochre sky, sandy ground */
-            BG_PALETTE[0]            = RGB15(22, 18, 10);  /* hazy sky   */
-            BG_PALETTE[C_SHADOW]     = RGB15(18, 14, 6);
-            BG_PALETTE[C_UNIFORM_DK] = RGB15(22, 17, 8);
-            BG_PALETTE[C_ENEMY]      = RGB15(24, 20, 10);
-            BG_PALETTE[C_METAL_DK]   = RGB15(14, 10, 4);
+        case 1: /* Desert outpost - hazy sky, dunes, cacti */
+            BG_PALETTE[0]           = RGB15(26, 21, 13);
+            BG_PALETTE[B_SKY_LOW]   = RGB15(28, 24, 16);
+            BG_PALETTE[B_CLOUD]     = RGB15(30, 28, 22);
+            BG_PALETTE[B_MTN]       = RGB15(20, 14, 7);   /* far mesas    */
+            BG_PALETTE[B_MTN_DK]    = RGB15(15, 10, 5);
+            BG_PALETTE[B_SURF]      = RGB15(26, 21, 11);  /* sand         */
+            BG_PALETTE[B_SURF_DK]   = RGB15(21, 16, 8);
+            BG_PALETTE[B_GROUND1]   = RGB15(18, 13, 6);
+            BG_PALETTE[B_GROUND2]   = RGB15(22, 17, 9);
+            BG_PALETTE[B_ROCK]      = RGB15(16, 12, 8);
+            BG_PALETTE[B_DECO]      = RGB15(8, 16, 6);    /* cacti        */
             break;
-        case 2: /* Factory fortress – dark sky, grey concrete */
-            BG_PALETTE[0]            = RGB15(4, 4, 6);     /* night sky  */
-            BG_PALETTE[C_SHADOW]     = RGB15(6, 6, 7);
-            BG_PALETTE[C_UNIFORM_DK] = RGB15(10, 10, 11);
-            BG_PALETTE[C_ENEMY]      = RGB15(8, 8, 9);
-            BG_PALETTE[C_METAL_DK]   = RGB15(6, 8, 12);
+        case 2: /* Factory fortress - night sky, steel skyline, lit windows */
+            BG_PALETTE[0]           = RGB15(3, 3, 8);
+            BG_PALETTE[B_SKY_LOW]   = RGB15(8, 5, 10);    /* city glow    */
+            BG_PALETTE[B_CLOUD]     = RGB15(9, 9, 11);    /* smoke        */
+            BG_PALETTE[B_MTN]       = RGB15(6, 7, 10);    /* skyline      */
+            BG_PALETTE[B_MTN_DK]    = RGB15(4, 5, 7);
+            BG_PALETTE[B_SURF]      = RGB15(12, 12, 14);  /* concrete     */
+            BG_PALETTE[B_SURF_DK]   = RGB15(8, 8, 10);
+            BG_PALETTE[B_GROUND1]   = RGB15(6, 6, 8);
+            BG_PALETTE[B_GROUND2]   = RGB15(9, 9, 11);
+            BG_PALETTE[B_ROCK]      = RGB15(12, 10, 6);   /* rubble       */
+            BG_PALETTE[B_DECO]      = RGB15(28, 24, 8);   /* lit windows  */
             break;
     }
 }
@@ -1359,7 +1758,7 @@ static void draw(void)
                    SpriteSize_16x16, SpriteColorFormat_256Color,
                    gfx[GFX_EXPLOSION], -1, false, false, fx[i].timer & 2, fx[i].timer & 4, false);
 
-    /* Pickups: draw GFX_PICKUP, blink slowly using flash counter */
+    /* Pickups: per-type crate icon, blink slowly using flash counter */
     for (int i = 0; i < MAX_PICKUPS; i++) {
         Pickup *p = &pickups[i];
         if (!p->alive) continue;
@@ -1367,11 +1766,10 @@ static void draw(void)
         if (sx < -16 || sx > SCREEN_W + 16) continue;
         /* blink every 16 frames to attract attention */
         if ((p->flash >> 4) & 1) continue;
-        /* use hflip to distinguish weapon types vs resource types */
-        int hflip = (p->type >= PICKUP_GRENADE);
+        /* each pickup type has its own crate icon */
         oamSet(&oamMain, id++, sx, p->y, 0, 0,
                SpriteSize_16x16, SpriteColorFormat_256Color,
-               gfx[GFX_PICKUP], -1, false, false, hflip, false, false);
+               gfx[GFX_PICKUP_HMG + p->type], -1, false, false, false, false, false);
     }
 
     /* Rocket projectiles */
@@ -1596,6 +1994,14 @@ int main(void)
     SPRITE_PALETTE[C_SHADOW]     = RGB15(4, 4, 4);
     SPRITE_PALETTE[C_PICKUP]     = RGB15(26, 22, 6);
     SPRITE_PALETTE[C_WHITE]      = RGB15(31, 31, 31);
+    SPRITE_PALETTE[C_SKIN_DK]    = RGB15(20, 13, 9);
+    SPRITE_PALETTE[C_UNIFORM_LT] = RGB15(12, 19, 11);
+    SPRITE_PALETTE[C_GUN]        = RGB15(3, 3, 4);
+    SPRITE_PALETTE[C_RED]        = RGB15(28, 5, 4);
+    SPRITE_PALETTE[C_BLUE]       = RGB15(8, 12, 28);
+    SPRITE_PALETTE[C_BROWN]      = RGB15(12, 7, 3);
+    SPRITE_PALETTE[C_METAL_LT]   = RGB15(23, 23, 26);
+    SPRITE_PALETTE[C_WOOD]       = RGB15(18, 12, 5);
 
     buildArt();
     buildBackground();

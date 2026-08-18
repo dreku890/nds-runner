@@ -1,26 +1,30 @@
-name: Build NDS ROM
+name: Build Nintendo DS ROM
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: devkitpro/devkitarm:latest
+
+    container:
+      image: devkitpro/devkitarm
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build ROM
-        working-directory: nds-runner
+      - name: Install NDS development libraries
+        run: dkp-pacman -S --noconfirm nds-dev
+
+      - name: Build .nds
         run: make
 
-      - name: Upload .nds artifact
+      - name: Upload .nds ROM
         uses: actions/upload-artifact@v4
         with:
-          name: steel-vanguard-nds
-          path: nds-runner/steel-vanguard.nds
-          if-no-files-found: error
+          name: blockcraft-nds
+          path: "*.nds"

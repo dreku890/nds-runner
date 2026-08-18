@@ -1,9 +1,11 @@
-name: Build Nintendo DS ROM
+name: Build NDS Game
 
 on:
   push:
     branches:
       - main
+      - master
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -11,20 +13,30 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: devkitpro/devkitarm
+      image: devkitpro/devkitarm:latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install NDS development libraries
-        run: dkp-pacman -S --noconfirm nds-dev
+      - name: Show toolchain
+        run: |
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "DEVKITARM=$DEVKITARM"
+          arm-none-eabi-gcc --version
+          make --version
 
-      - name: Build .nds
+      - name: Build NDS ROM
         run: make
 
-      - name: Upload .nds ROM
+      - name: Find build artifacts
+        run: |
+          find . -type f \( -name "*.nds" -o -name "*.gba" \) -print
+
+      - name: Upload NDS ROM
         uses: actions/upload-artifact@v4
         with:
           name: nds-runner
-          path: "*.nds"
+          path: |
+            **/*.nds
+          if-no-files-found: error

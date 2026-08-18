@@ -19,24 +19,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show toolchain
+      - name: Show devkitARM environment
         run: |
           echo "DEVKITPRO=$DEVKITPRO"
           echo "DEVKITARM=$DEVKITARM"
-          arm-none-eabi-gcc --version
+          echo "PATH=$PATH"
+          ls -la "$DEVKITARM"
+          ls -la "$DEVKITARM/bin" || true
           make --version
 
       - name: Build NDS ROM
         run: make
 
-      - name: Find build artifacts
+      - name: Find NDS ROM
         run: |
-          find . -type f \( -name "*.nds" -o -name "*.gba" \) -print
+          find . -type f -name "*.nds" -print
 
       - name: Upload NDS ROM
         uses: actions/upload-artifact@v4
         with:
           name: nds-runner
-          path: |
-            **/*.nds
+          path: "**/*.nds"
           if-no-files-found: error
